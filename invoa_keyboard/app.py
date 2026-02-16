@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QHBoxLayout,
     QWidget,
@@ -97,6 +98,7 @@ BACKSPACE_SVG = """
 """
 
 BUTTON_HOVER_SCALE = 1.0
+BUTTON_WIDTH_FACTOR = 1.2
 
 
 class SelectionButton(QPushButton):
@@ -115,12 +117,15 @@ class SelectionButton(QPushButton):
         self._hovered = False
         self._base_diameter = 0
         self._base_font_size = 0
+        self._base_width = 0
+        self._base_height = 0
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._fire_long)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def _fire_long(self) -> None:
         if self._press_time is None:
@@ -162,11 +167,24 @@ class SelectionButton(QPushButton):
     def set_base_style(self, diameter: int, font_size: int) -> None:
         self._base_diameter = max(1, diameter)
         self._base_font_size = max(1, font_size)
-        self.setFixedSize(self._base_diameter, self._base_diameter)
+        self._base_height = self._base_diameter
+        self._base_width = max(1, int(self._base_diameter * BUTTON_WIDTH_FACTOR))
+        self.setMaximumSize(self._base_width, self._base_height)
+        self.setMinimumSize(70, 60)
         self.update()
 
     def _apply_style(self) -> None:
         self.update()
+
+    def _label_scale(self) -> float:
+        text = self.text().strip()
+        if not text:
+            return 1.0
+        if len(text) == 1:
+            return 1.35
+        if "-" in text or "·" in text:
+            return 0.95
+        return 1.0
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         if self._base_diameter <= 0:
@@ -176,39 +194,69 @@ class SelectionButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
-        diameter = max(1, int(self._base_diameter))
-        font_size = max(1, int(self._base_font_size))
+        width = max(1, int(self._base_width or self._base_diameter))
+        height = max(1, int(self._base_height or self._base_diameter))
+        font_size = max(1, int(self._base_font_size * self._label_scale()))
 
         rect = self.rect()
         center_x = rect.center().x()
         center_y = rect.center().y()
-        radius = diameter // 2
+        radius = max(16, int(min(width, height) * 0.22))
 
         fg = QColor(self._colors["fg"])
         bg = QColor(self._colors["bg"])
         accent = QColor(self._accent)
         if self._hovered:
             fill = fg
-            text = bg
+            text_color = bg
         else:
             fill = bg
-            text = fg
+            text_color = fg
         stroke = accent
 
         painter.setBrush(QBrush(fill))
+        stroke_width = max(4, int(min(width, height) * 0.06))
         pen = QPen(stroke)
-        pen.setWidth(max(4, int(diameter * 0.06)))
+        pen.setWidth(stroke_width)
         painter.setPen(pen)
-        painter.drawEllipse(center_x - radius, center_y - radius, diameter, diameter)
+        inset = stroke_width / 2.0
+        rect_left = center_x - width // 2 + inset
+        rect_top = center_y - height // 2 + inset
+        rect_w = width - stroke_width
+        rect_h = height - stroke_width
+        painter.drawRoundedRect(rect_left, rect_top, rect_w, rect_h, radius, radius)
 
         font = QFont()
         font.setPointSize(font_size)
         font.setBold(True)
+        pad_x = max(12, int(width * 0.09))
+        pad_y = max(6, int(height * 0.06))
+        text_rect = rect.adjusted(pad_x, pad_y, -pad_x, -pad_y)
+
+        metrics = QFontMetrics(font)
+        label = self.text()
+        if label:
+            bounds = metrics.boundingRect(label)
+            avail_w = max(1, text_rect.width())
+            avail_h = max(1, text_rect.height())
+            scale_w = avail_w / max(1, bounds.width())
+            scale_h = avail_h / max(1, bounds.height())
+            scale = min(1.0, scale_w, scale_h) * 0.98
+            if scale < 1.0:
+                font.setPointSize(max(1, int(font_size * scale)))
+                metrics = QFontMetrics(font)
+
         painter.setFont(font)
-        painter.setPen(QPen(text))
-        pad = max(6, int(diameter * 0.12))
-        text_rect = rect.adjusted(pad, pad, -pad, -pad)
-        painter.drawText(text_rect, Qt.AlignCenter, self.text())
+        painter.setPen(QPen(text_color))
+        painter.drawText(text_rect, Qt.AlignCenter, label)
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        width = self._base_width or int((self._base_diameter or 120) * BUTTON_WIDTH_FACTOR)
+        height = self._base_height or self._base_diameter or 120
+        return QSize(width, height)
+
+    def minimumSizeHint(self) -> QSize:  # type: ignore[override]
+        return QSize(70, 60)
 
 
 class IconButton(QPushButton):
@@ -222,10 +270,12 @@ class IconButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.setIcon(QIcon())
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
     def set_base_size(self, size: int) -> None:
         self._base_size = max(1, size)
-        self.setFixedSize(self._base_size, self._base_size)
+        self.setMaximumSize(self._base_size, self._base_size)
+        self.setMinimumSize(36, 36)
         self._icon_size = int(self._base_size * 0.6)
         self.setIconSize(QSize(self._icon_size, self._icon_size))
         self._apply_style()
@@ -258,6 +308,12 @@ class IconButton(QPushButton):
         self._hovered = False
         self._apply_style()
         super().leaveEvent(event)
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        return QSize(self._base_size or 72, self._base_size or 72)
+
+    def minimumSizeHint(self) -> QSize:  # type: ignore[override]
+        return QSize(36, 36)
 
 
 class MoveHandle(QPushButton):
@@ -559,6 +615,8 @@ class KeyboardWindow(QMainWindow):
         self._text_view.setReadOnly(True)
         self._text_view.setMaximumBlockCount(500)
         self._text_view.setFocusPolicy(Qt.NoFocus)
+        self._text_view.setViewportMargins(0, 0, 0, 0)
+        self._text_view.document().setDocumentMargin(4)
 
         self._speak_button = IconButton(SPEAKER_SVG, colors, colors["bg"], self)
         self._speak_button.clicked.connect(self._on_speak)
@@ -640,7 +698,7 @@ class KeyboardWindow(QMainWindow):
                 color: {fg};
                 border: 2px solid {fg};
                 border-radius: {radius}px;
-                padding: 10px 22px;
+                padding: 2px 16px;
             }}
             """
         )
@@ -672,16 +730,15 @@ class KeyboardWindow(QMainWindow):
             v_spacing = 18
 
         buttons_gap = 64  # must match buttons_row.setSpacing(...)
-        max_widget_d = max(140, int((w_inner - buttons_gap) / 2))
+        max_widget_d = max(160, int((w_inner - buttons_gap) / (2 * BUTTON_WIDTH_FACTOR)))
 
         for _ in range(6):
-            base_d = max(90, int(max_widget_d / BUTTON_HOVER_SCALE))
-            font_size = max(22, int(base_d * 0.45 * scale))
+            base_d = max(110, int(max_widget_d / BUTTON_HOVER_SCALE))
+            font_size = max(26, int(base_d * 0.58 * scale))
             alphabet_h = max(60, int(font_size * 1.4))
             handle_size = max(36, int(base_d * 0.32))
             action_size = max(70, int(base_d * 0.8))
-            text_h = max(90, int(font_size * 2.0))
-            text_h = max(text_h, action_size)
+            text_h = max(60, int(font_size * 1.5))
             actions_h = action_size
             total_h = alphabet_h + max_widget_d + text_h + actions_h + handle_size + v_spacing * 4
             if total_h <= h_inner:
@@ -689,14 +746,14 @@ class KeyboardWindow(QMainWindow):
             shrink = h_inner / max(total_h, 1)
             max_widget_d = max(80, int(max_widget_d * shrink))
 
-        base_d = max(90, int(max_widget_d / BUTTON_HOVER_SCALE))
+        base_d = max(110, int(max_widget_d / BUTTON_HOVER_SCALE))
+        base_d = int(base_d * 1.1)
         self._bubble_diameter = base_d
-        font_size = max(22, int(base_d * 0.45 * scale))
+        font_size = max(26, int(base_d * 0.58 * scale))
         alphabet_h = max(60, int(font_size * 1.4))
         handle_size = max(36, int(base_d * 0.32))
         action_size = max(70, int(base_d * 0.8))
-        text_h = max(90, int(font_size * 2.0))
-        text_h = max(text_h, action_size)
+        text_h = max(60, int(font_size * 1.5))
 
         self._left_button.set_base_style(base_d, font_size)
         self._right_button.set_base_style(base_d, font_size)
@@ -705,17 +762,20 @@ class KeyboardWindow(QMainWindow):
         text_font.setPointSize(font_size)
         text_font.setBold(True)
         self._text_view.setFont(text_font)
-        self._text_view.setFixedHeight(text_h)
+        self._text_view.setMaximumHeight(text_h)
+        self._text_view.setMinimumHeight(60)
         self._apply_text_style()
 
         self._alphabet_strip.set_colors(colors)
-        self._alphabet_strip.setFixedHeight(alphabet_h)
+        self._alphabet_strip.setMaximumHeight(alphabet_h)
+        self._alphabet_strip.setMinimumHeight(40)
 
         self._backspace_button.set_base_size(action_size)
         self._send_button.set_base_size(action_size)
         self._speak_button.set_base_size(action_size)
         if self._actions_container is not None:
-            self._actions_container.setFixedHeight(action_size + 6)
+            self._actions_container.setMaximumHeight(action_size + 6)
+            self._actions_container.setMinimumHeight(40)
 
         self._move_handle.set_base_size(handle_size)
         self._resize_handle.set_base_size(handle_size)

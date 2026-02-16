@@ -15,4 +15,4 @@ def test_split_group_odd():
 
 def test_label_for_group():
     assert label_for_group(["A"]) == "A"
-    assert label_for_group(["A", "B", "C"]) == "A-C"
+    assert label_for_group(["A", "B", "C"]) == "A·C"

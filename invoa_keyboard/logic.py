@@ -17,4 +17,4 @@ def label_for_group(group: list[str]) -> str:
         return ""
     if len(group) == 1:
         return group[0]
-    return f"{group[0]}-{group[-1]}"
+    return f"{group[0]}·{group[-1]}"
