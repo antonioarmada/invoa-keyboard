@@ -1,0 +1,847 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Iterable
+
+from PySide6.QtCore import Qt, QTimer, Signal, QByteArray, QSize
+from PySide6.QtGui import (
+    QFont,
+    QFontMetrics,
+    QTextCursor,
+    QPainter,
+    QPen,
+    QBrush,
+    QIcon,
+    QPixmap,
+    QPainterPath,
+    QColor,
+)
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QStackedLayout,
+)
+
+from .logic import LETTERS, label_for_group, split_group
+from .output import GlobalKeyboardOutput, OutputResult
+from .settings import Settings
+from .speech import SpeechOutput
+
+
+def svg_icon(svg: str, size: int) -> QIcon:
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
+SPEAKER_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M11 5L6 9H3v6h3l5 4V5z" fill="{color}" />
+  <path d="M15 9a4 4 0 0 1 0 6" />
+  <path d="M18 7a7 7 0 0 1 0 10" />
+</svg>
+"""
+
+MOVE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 2v20M2 12h20" />
+  <path d="M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3" />
+</svg>
+"""
+
+RESIZE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 18l12-12" />
+  <path d="M14 4h6v6" />
+  <path d="M4 14v6h6" />
+</svg>
+"""
+
+KEYBOARD_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="5" width="18" height="14" rx="2" ry="2" />
+  <path d="M7 9h2M11 9h2M15 9h2M7 13h2M11 13h6" />
+</svg>
+"""
+
+MINIMIZE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 19h14" />
+</svg>
+"""
+
+SEND_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M22 2L11 13" />
+  <path d="M22 2l-7 20-4-9-9-4z" />
+</svg>
+"""
+
+BACKSPACE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M19 12H5" />
+  <path d="M11 6l-6 6 6 6" />
+</svg>
+"""
+
+BUTTON_HOVER_SCALE = 1.0
+
+
+class SelectionButton(QPushButton):
+    shortClicked = Signal()
+    longClicked = Signal()
+
+    def __init__(
+        self, long_click_ms: int, colors: dict[str, str], accent_color: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self._long_click_ms = long_click_ms
+        self._colors = colors
+        self._accent = accent_color
+        self._press_time: float | None = None
+        self._long_fired = False
+        self._hovered = False
+        self._base_diameter = 0
+        self._base_font_size = 0
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._fire_long)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def _fire_long(self) -> None:
+        if self._press_time is None:
+            return
+        self._long_fired = True
+        self.longClicked.emit()
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            self._press_time = time.monotonic()
+            self._long_fired = False
+            self._timer.start(self._long_click_ms)
+            self.setDown(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton and self._press_time is not None:
+            self._timer.stop()
+            if not self._long_fired:
+                self.shortClicked.emit()
+            self._press_time = None
+            self.setDown(False)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = False
+        self._apply_style()
+        super().leaveEvent(event)
+
+    def set_base_style(self, diameter: int, font_size: int) -> None:
+        self._base_diameter = max(1, diameter)
+        self._base_font_size = max(1, font_size)
+        self.setFixedSize(self._base_diameter, self._base_diameter)
+        self.update()
+
+    def _apply_style(self) -> None:
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        if self._base_diameter <= 0:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        diameter = max(1, int(self._base_diameter))
+        font_size = max(1, int(self._base_font_size))
+
+        rect = self.rect()
+        center_x = rect.center().x()
+        center_y = rect.center().y()
+        radius = diameter // 2
+
+        fg = QColor(self._colors["fg"])
+        bg = QColor(self._colors["bg"])
+        accent = QColor(self._accent)
+        if self._hovered:
+            fill = fg
+            text = bg
+        else:
+            fill = bg
+            text = fg
+        stroke = accent
+
+        painter.setBrush(QBrush(fill))
+        pen = QPen(stroke)
+        pen.setWidth(max(4, int(diameter * 0.06)))
+        painter.setPen(pen)
+        painter.drawEllipse(center_x - radius, center_y - radius, diameter, diameter)
+
+        font = QFont()
+        font.setPointSize(font_size)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(text))
+        pad = max(6, int(diameter * 0.12))
+        text_rect = rect.adjusted(pad, pad, -pad, -pad)
+        painter.drawText(text_rect, Qt.AlignCenter, self.text())
+
+
+class IconButton(QPushButton):
+    def __init__(self, svg_template: str, colors: dict[str, str], base_bg: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._colors = colors
+        self._svg_template = svg_template
+        self._base_bg = base_bg
+        self._base_size = 0
+        self._hovered = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setIcon(QIcon())
+
+    def set_base_size(self, size: int) -> None:
+        self._base_size = max(1, size)
+        self.setFixedSize(self._base_size, self._base_size)
+        self._icon_size = int(self._base_size * 0.6)
+        self.setIconSize(QSize(self._icon_size, self._icon_size))
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        radius = self._base_size // 4 if self._base_size else 6
+        fg = self._colors["fg"]
+        bg = self._base_bg
+        if self._hovered:
+            bg, fg = fg, bg
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {fg};
+                border: 3px solid {fg};
+                border-radius: {radius}px;
+            }}
+            """
+        )
+        if self._base_size:
+            self.setIcon(svg_icon(self._svg_template.format(color=fg), max(16, self._icon_size)))
+
+    def enterEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = False
+        self._apply_style()
+        super().leaveEvent(event)
+
+
+class MoveHandle(QPushButton):
+    def __init__(self, icon: QIcon, colors: dict[str, str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._colors = colors
+        self.setIcon(icon)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self._drag_origin = None
+        self._window_origin = None
+        self._apply_style()
+
+    def set_base_size(self, size: int) -> None:
+        self.setFixedSize(size, size)
+        icon_size = int(size * 0.6)
+        self.setIconSize(QSize(icon_size, icon_size))
+
+    def _apply_style(self) -> None:
+        bg = self._colors["bg"]
+        fg = self._colors["fg"]
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {fg};
+                border: 2px solid {fg};
+                border-radius: 6px;
+            }}
+            """
+        )
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            self._drag_origin = event.globalPosition().toPoint()
+            self._window_origin = self.window().pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._drag_origin is None or self._window_origin is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.globalPosition().toPoint() - self._drag_origin
+        self.window().move(self._window_origin + delta)
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        self._drag_origin = None
+        self._window_origin = None
+        super().mouseReleaseEvent(event)
+
+
+class ResizeHandle(QPushButton):
+    def __init__(self, icon: QIcon, colors: dict[str, str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._colors = colors
+        self.setIcon(icon)
+        self.setCursor(Qt.SizeFDiagCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self._drag_origin = None
+        self._size_origin = None
+        self._apply_style()
+
+    def set_base_size(self, size: int) -> None:
+        self.setFixedSize(size, size)
+        icon_size = int(size * 0.6)
+        self.setIconSize(QSize(icon_size, icon_size))
+
+    def _apply_style(self) -> None:
+        bg = self._colors["bg"]
+        fg = self._colors["fg"]
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {fg};
+                border: 2px solid {fg};
+                border-radius: 6px;
+            }}
+            """
+        )
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            self._drag_origin = event.globalPosition().toPoint()
+            self._size_origin = self.window().size()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._drag_origin is None or self._size_origin is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.globalPosition().toPoint() - self._drag_origin
+        new_width = max(self.window().minimumWidth(), self._size_origin.width() + delta.x())
+        new_height = max(self.window().minimumHeight(), self._size_origin.height() + delta.y())
+        self.window().resize(new_width, new_height)
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        self._drag_origin = None
+        self._size_origin = None
+        super().mouseReleaseEvent(event)
+
+
+class AlphabetStrip(QWidget):
+    def __init__(self, letters: Iterable[str], colors: dict[str, str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._letters = list(letters)
+        self._left_highlight = set(self._letters)
+        self._right_highlight: set[str] = set()
+        self._colors = colors
+        self.setMinimumHeight(48)
+
+    def set_highlight_groups(self, left_letters: Iterable[str], right_letters: Iterable[str]) -> None:
+        self._left_highlight = set(left_letters)
+        self._right_highlight = set(right_letters)
+        self.update()
+
+    def set_colors(self, colors: dict[str, str]) -> None:
+        self._colors = colors
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        fg = QColor("#000000")
+        outline = QColor(self._colors["fg"])
+        left_color = QColor(self._colors.get("left_bg", "#0055FF"))
+        right_color = QColor(self._colors.get("right_bg", "#FF6A00"))
+
+        height = self.height()
+        width = self.width()
+        font_size = max(10, int(height * 0.6))
+
+        while font_size > 10:
+            font = QFont()
+            font.setPointSize(font_size)
+            font.setBold(True)
+            metrics = QFontMetrics(font)
+            spacing = max(4, int(font_size * 0.15))
+            total = sum(metrics.horizontalAdvance(letter) for letter in self._letters) + spacing * (
+                len(self._letters) - 1
+            )
+            if total <= width - 12:
+                break
+            font_size -= 1
+
+        font = QFont()
+        font.setPointSize(font_size)
+        font.setBold(True)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        spacing = max(4, int(font_size * 0.15))
+        total = sum(metrics.horizontalAdvance(letter) for letter in self._letters) + spacing * (len(self._letters) - 1)
+        start_x = max(6, (width - total) // 2)
+        baseline = int((height + metrics.ascent() - metrics.descent()) / 2)
+
+        positions: list[tuple[int, int]] = []
+        x = start_x
+        for letter in self._letters:
+            positions.append((x, metrics.horizontalAdvance(letter)))
+            x += metrics.horizontalAdvance(letter) + spacing
+
+        def draw_bar(indices: list[int], color: QColor) -> None:
+            if not indices:
+                return
+            start_i = min(indices)
+            end_i = max(indices)
+            left_x = positions[start_i][0]
+            right_x = positions[end_i][0] + positions[end_i][1]
+            pad_x = max(2, int(font_size * 0.2))
+            pad_y = max(2, int(font_size * 0.25))
+            bar_left = left_x - pad_x
+            bar_right = right_x + pad_x
+            bar_top = baseline - metrics.ascent() - pad_y
+            bar_height = metrics.height() + pad_y * 2
+            bar_color = QColor(color)
+            bar_color.setAlpha(170)
+            painter.setBrush(QBrush(bar_color))
+            painter.setPen(Qt.NoPen)
+            radius = bar_height // 2
+            painter.drawRoundedRect(bar_left, bar_top, bar_right - bar_left, bar_height, radius, radius)
+
+        left_indices = [i for i, letter in enumerate(self._letters) if letter in self._left_highlight]
+        right_indices = [i for i, letter in enumerate(self._letters) if letter in self._right_highlight]
+        draw_bar(left_indices, left_color)
+        draw_bar(right_indices, right_color)
+
+        x = start_x
+        for idx, letter in enumerate(self._letters):
+            path = QPainterPath()
+            path.addText(x, baseline, font, letter)
+            stroke_width = max(2, int(font_size * 0.12))
+            pen = QPen(outline)
+            pen.setWidth(stroke_width)
+            painter.strokePath(path, pen)
+            fill = fg
+            painter.fillPath(path, QBrush(fill))
+            x += metrics.horizontalAdvance(letter) + spacing
+
+
+@dataclass
+class SelectionState:
+    group: list[str]
+    history: list[list[str]]
+
+
+class KeyboardWindow(QMainWindow):
+    def __init__(self, settings: Settings, output: GlobalKeyboardOutput) -> None:
+        super().__init__()
+        self._settings = settings
+        self._output = output
+        self._speech = SpeechOutput()
+        self._state = SelectionState(group=LETTERS.copy(), history=[])
+        self._typed_text = ""
+        self._left_group: list[str] = []
+        self._right_group: list[str] = []
+        self._minimized = False
+        self._previous_geometry = None
+        self._bubble_diameter = 0
+
+        self.setWindowTitle("Teclado Ocular Binario")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.WindowDoesNotAcceptFocus, True)
+        self.setWindowFlag(Qt.Tool, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self._on_top_timer = QTimer(self)
+        self._on_top_timer.setInterval(1500)
+        self._on_top_timer.timeout.connect(self._ensure_on_top)
+        self._on_top_timer.start()
+        self._build_ui()
+        self._apply_styles()
+        self._update_view()
+        self._notify_accessibility_if_needed()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._ensure_on_top()
+
+    def _ensure_on_top(self) -> None:
+        if not (self.windowFlags() & Qt.WindowStaysOnTopHint):
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            self.show()
+        self.raise_()
+
+    def _notify_accessibility_if_needed(self) -> None:
+        trusted = self._output.macos_accessibility_trusted()
+        if trusted is False:
+            message = (
+                "Para escribir en otras apps, habilita Accesibilidad para esta aplicación.\n"
+                "macOS: Ajustes del Sistema → Privacidad y seguridad → Accesibilidad.\n"
+                "Si ejecutás desde Terminal, habilitá Terminal o la app .app.\n"
+            )
+            QMessageBox.information(self, "Accesibilidad requerida", message)
+
+    def _build_ui(self) -> None:
+        colors = self._settings.resolved_colors()
+        central = QWidget(self)
+        central.setAutoFillBackground(False)
+        central.setAttribute(Qt.WA_TranslucentBackground, True)
+        central.setFocusPolicy(Qt.NoFocus)
+        self._stack = QStackedLayout(central)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+
+        self._main_panel = QWidget(central)
+        layout = QVBoxLayout(self._main_panel)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(18)
+
+        self._alphabet_strip = AlphabetStrip(LETTERS, colors, self)
+
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(64)
+        buttons_row.addStretch(1)
+
+        left_bg = colors.get("left_bg", colors["bg"])
+        right_bg = colors.get("right_bg", colors["bg"])
+        self._left_button = SelectionButton(self._settings.long_click_ms, colors, left_bg, self)
+        self._right_button = SelectionButton(self._settings.long_click_ms, colors, right_bg, self)
+
+        self._left_button.shortClicked.connect(self._on_left_short)
+        self._right_button.shortClicked.connect(self._on_right_short)
+        self._left_button.longClicked.connect(self._on_long_click)
+        self._right_button.longClicked.connect(self._on_long_click)
+
+        buttons_row.addWidget(self._left_button, 0)
+        buttons_row.addWidget(self._right_button, 0)
+        buttons_row.addStretch(1)
+
+        self._text_view = QPlainTextEdit(self)
+        self._text_view.setReadOnly(True)
+        self._text_view.setMaximumBlockCount(500)
+        self._text_view.setFocusPolicy(Qt.NoFocus)
+
+        self._speak_button = IconButton(SPEAKER_SVG, colors, colors["bg"], self)
+        self._speak_button.clicked.connect(self._on_speak)
+
+        self._send_button = IconButton(SEND_SVG, colors, colors["bg"], self)
+        self._send_button.clicked.connect(self._on_send)
+
+        self._backspace_button = IconButton(BACKSPACE_SVG, colors, colors["bg"], self)
+        self._backspace_button.clicked.connect(self._on_backspace)
+
+        text_row = QHBoxLayout()
+        text_row.setSpacing(16)
+        text_row.addWidget(self._text_view, 1)
+        text_row.addStretch(0)
+
+        self._actions_container = QWidget(self)
+        actions_row = QHBoxLayout(self._actions_container)
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(18)
+        actions_row.addStretch(1)
+        actions_row.addWidget(self._backspace_button, 0)
+        actions_row.addWidget(self._send_button, 0)
+        actions_row.addWidget(self._speak_button, 0)
+        actions_row.addStretch(1)
+
+        move_icon = svg_icon(MOVE_SVG.format(color=colors["fg"]), 64)
+        resize_icon = svg_icon(RESIZE_SVG.format(color=colors["fg"]), 64)
+        self._move_handle = MoveHandle(move_icon, colors, self)
+        self._resize_handle = ResizeHandle(resize_icon, colors, self)
+        self._minimize_button = IconButton(MINIMIZE_SVG, colors, colors["bg"], self)
+        self._minimize_button.clicked.connect(self._on_minimize)
+
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(10)
+        controls_row.addStretch(1)
+        controls_row.addWidget(self._minimize_button, 0)
+        controls_row.addWidget(self._move_handle, 0)
+        controls_row.addWidget(self._resize_handle, 0)
+
+        layout.addWidget(self._alphabet_strip, 0)
+        layout.addLayout(buttons_row, 1)
+        layout.addLayout(text_row, 0)
+        layout.addWidget(self._actions_container, 0)
+        layout.addLayout(controls_row, 0)
+
+        self._min_panel = QWidget(central)
+        min_layout = QVBoxLayout(self._min_panel)
+        min_layout.setContentsMargins(0, 0, 0, 0)
+        min_layout.setSpacing(0)
+        self._floating_button = IconButton(KEYBOARD_SVG, colors, colors["bg"], self)
+        self._floating_button.clicked.connect(self._on_restore)
+        min_layout.addWidget(self._floating_button, 0, Qt.AlignCenter)
+
+        self._stack.addWidget(self._main_panel)
+        self._stack.addWidget(self._min_panel)
+        self._stack.setCurrentWidget(self._main_panel)
+
+        self.setCentralWidget(central)
+
+    def _apply_styles(self) -> None:
+        colors = self._settings.resolved_colors()
+        self.setStyleSheet(
+            f"""
+            QMainWindow {{ background-color: transparent; }}
+            QWidget {{ background-color: transparent; }}
+            """
+        )
+        self._apply_text_style()
+
+    def _apply_text_style(self) -> None:
+        colors = self._settings.resolved_colors()
+        bg = colors["bg"]
+        fg = colors["fg"]
+        radius = max(12, int(self._text_view.height() * 0.28)) if self._text_view else 24
+        self._text_view.setStyleSheet(
+            f"""
+            QPlainTextEdit {{
+                background-color: {bg};
+                color: {fg};
+                border: 2px solid {fg};
+                border-radius: {radius}px;
+                padding: 10px 22px;
+            }}
+            """
+        )
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_fonts_and_sizes()
+
+    def _update_fonts_and_sizes(self) -> None:
+        if self._minimized:
+            self._apply_minimized_size()
+            return
+
+        colors = self._settings.resolved_colors()
+        scale = max(self._settings.font_scale, 0.5)
+
+        panel = getattr(self, "_main_panel", self)
+        panel_layout = panel.layout()
+        if panel_layout is not None:
+            m = panel_layout.contentsMargins()
+            w_inner = max(240, panel.width() - m.left() - m.right())
+            h_inner = max(200, panel.height() - m.top() - m.bottom())
+            v_spacing = panel_layout.spacing()
+            if v_spacing < 0:
+                v_spacing = 18
+        else:
+            w_inner = max(240, self.width())
+            h_inner = max(200, self.height())
+            v_spacing = 18
+
+        buttons_gap = 64  # must match buttons_row.setSpacing(...)
+        max_widget_d = max(140, int((w_inner - buttons_gap) / 2))
+
+        for _ in range(6):
+            base_d = max(90, int(max_widget_d / BUTTON_HOVER_SCALE))
+            font_size = max(22, int(base_d * 0.45 * scale))
+            alphabet_h = max(60, int(font_size * 1.4))
+            handle_size = max(36, int(base_d * 0.32))
+            action_size = max(70, int(base_d * 0.8))
+            text_h = max(90, int(font_size * 2.0))
+            text_h = max(text_h, action_size)
+            actions_h = action_size
+            total_h = alphabet_h + max_widget_d + text_h + actions_h + handle_size + v_spacing * 4
+            if total_h <= h_inner:
+                break
+            shrink = h_inner / max(total_h, 1)
+            max_widget_d = max(80, int(max_widget_d * shrink))
+
+        base_d = max(90, int(max_widget_d / BUTTON_HOVER_SCALE))
+        self._bubble_diameter = base_d
+        font_size = max(22, int(base_d * 0.45 * scale))
+        alphabet_h = max(60, int(font_size * 1.4))
+        handle_size = max(36, int(base_d * 0.32))
+        action_size = max(70, int(base_d * 0.8))
+        text_h = max(90, int(font_size * 2.0))
+        text_h = max(text_h, action_size)
+
+        self._left_button.set_base_style(base_d, font_size)
+        self._right_button.set_base_style(base_d, font_size)
+
+        text_font = QFont()
+        text_font.setPointSize(font_size)
+        text_font.setBold(True)
+        self._text_view.setFont(text_font)
+        self._text_view.setFixedHeight(text_h)
+        self._apply_text_style()
+
+        self._alphabet_strip.set_colors(colors)
+        self._alphabet_strip.setFixedHeight(alphabet_h)
+
+        self._backspace_button.set_base_size(action_size)
+        self._send_button.set_base_size(action_size)
+        self._speak_button.set_base_size(action_size)
+        if self._actions_container is not None:
+            self._actions_container.setFixedHeight(action_size + 6)
+
+        self._move_handle.set_base_size(handle_size)
+        self._resize_handle.set_base_size(handle_size)
+        self._minimize_button.set_base_size(handle_size)
+
+    def _update_view(self) -> None:
+        group = self._state.group
+        if len(group) <= 1:
+            self._alphabet_strip.set_highlight_groups(group, [])
+        else:
+            left, right = split_group(group)
+            self._alphabet_strip.set_highlight_groups(left, right)
+
+        if len(group) <= 1:
+            self._left_button.setText("")
+            self._right_button.setText("")
+            self._left_button.setEnabled(False)
+            self._right_button.setEnabled(False)
+            return
+
+        left, right = split_group(group)
+        self._left_group = left
+        self._right_group = right
+
+        self._left_button.setText(label_for_group(left))
+        self._right_button.setText(label_for_group(right))
+        self._left_button.setEnabled(True)
+        self._right_button.setEnabled(True)
+        self._update_fonts_and_sizes()
+
+    def _on_left_short(self) -> None:
+        self._handle_selection(self._left_group)
+
+    def _on_right_short(self) -> None:
+        self._handle_selection(self._right_group)
+
+    def _on_long_click(self) -> None:
+        if not self._state.history:
+            return
+        self._state.group = self._state.history.pop()
+        self._update_view()
+
+    def _handle_selection(self, group: list[str]) -> None:
+        if len(group) == 1:
+            letter = group[0]
+            self._typed_text += letter
+            self._text_view.setPlainText(self._typed_text)
+            self._text_view.moveCursor(QTextCursor.End)
+            self._reset_to_root()
+            return
+
+        self._state.history.append(self._state.group)
+        self._state.group = group
+        self._update_view()
+
+    def _reset_to_root(self) -> None:
+        self._state.group = LETTERS.copy()
+        self._state.history = []
+        self._update_view()
+
+    def _show_output_error(self, result: OutputResult) -> None:
+        message = (
+            "No se pudo escribir en el sistema.\n"
+            "En macOS, habilita los permisos de Accesibilidad para esta app.\n"
+            "En Windows, ejecuta como administrador si es necesario.\n\n"
+            f"Detalle: {result.error or 'desconocido'}"
+        )
+        QMessageBox.warning(self, "Permisos requeridos", message)
+
+    def _on_speak(self) -> None:
+        text = self._typed_text.strip()
+        if not text:
+            return
+        self._speech.speak(text)
+
+    def _on_backspace(self) -> None:
+        if not self._typed_text:
+            return
+        self._typed_text = self._typed_text[:-1]
+        self._text_view.setPlainText(self._typed_text)
+        self._text_view.moveCursor(QTextCursor.End)
+
+    def _on_send(self) -> None:
+        text = self._typed_text.strip()
+        if not text:
+            return
+        result = self._output.send_text(text)
+        if not result.ok:
+            self._show_output_error(result)
+            return
+        self._typed_text = ""
+        self._text_view.setPlainText("")
+
+    def _on_minimize(self) -> None:
+        if self._minimized:
+            return
+        self._minimized = True
+        self._previous_geometry = self.geometry()
+        self._stack.setCurrentWidget(self._min_panel)
+        self._apply_minimized_size()
+        self._ensure_on_top()
+
+    def _on_restore(self) -> None:
+        if not self._minimized:
+            return
+        self._minimized = False
+        self._stack.setCurrentWidget(self._main_panel)
+        self.setMinimumSize(320, 280)
+        self.setMaximumSize(16777215, 16777215)
+        if self._previous_geometry is not None:
+            self.setGeometry(self._previous_geometry)
+        self._update_fonts_and_sizes()
+        self._ensure_on_top()
+
+    def _apply_minimized_size(self) -> None:
+        size = max(80, int(self._bubble_diameter or 120))
+        self._floating_button.set_base_size(size)
+        self.setFixedSize(size, size)
+
+
+def run_app(settings: Settings, fullscreen: bool) -> int:
+    app = QApplication([])
+    output = GlobalKeyboardOutput()
+    window = KeyboardWindow(settings, output)
+    if fullscreen:
+        window.showFullScreen()
+    else:
+        window.show()
+    return app.exec()
