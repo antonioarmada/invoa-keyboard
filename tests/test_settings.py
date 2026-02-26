@@ -19,6 +19,7 @@ def test_creates_default_yaml_if_missing(tmp_path: Path) -> None:
     defaults = default_settings()
     assert settings.interaction.group_count == 2
     assert settings.interaction.long_click_ms == defaults.interaction.long_click_ms
+    assert settings.speech.read_group_on_hover is False
     assert settings.ui.colors["bg"] == defaults.ui.colors["bg"]
 
 
@@ -69,6 +70,9 @@ speech:
   engine: "system"
   voice: null
   rate: 1.2
+  read_group_on_hover: true
+  read_group_on_hover_loud: false
+  hover_read_debounce_ms: 120
 window:
   start_fullscreen: true
   start_minimized: false
@@ -102,6 +106,9 @@ experimental:
     assert settings.typing.clear_after_send is False
     assert settings.output.enabled is False
     assert settings.speech.enabled is False
+    assert settings.speech.read_group_on_hover is True
+    assert settings.speech.read_group_on_hover_loud is False
+    assert settings.speech.hover_read_debounce_ms == 120
     assert settings.window.start_fullscreen is True
     assert settings.window.movable is False
     assert settings.accessibility.show_macos_permission_prompt is False
@@ -137,6 +144,8 @@ ui:
     left_bg: "#00B7FF"
 window:
   on_top_refresh_ms: 10
+speech:
+  hover_read_debounce_ms: -20
 """.strip(),
         encoding="utf-8",
     )
@@ -149,6 +158,7 @@ window:
     assert settings.ui.colors["bg"] == "#000000"
     assert "left_bg" not in settings.ui.colors
     assert settings.window.on_top_refresh_ms == 250
+    assert settings.speech.hover_read_debounce_ms == 0
 
 
 def test_group_count_clamps_low(tmp_path: Path) -> None:

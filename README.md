@@ -66,6 +66,9 @@ Notas de validacion:
 - `window.on_top_refresh_ms` se limita a un minimo de `250`.
 - Colores invalidos vuelven al valor por defecto.
 - Los colores de grupos se asignan automaticamente con alto contraste (>= 7.0).
+- `speech.read_group_on_hover: true` habilita lectura en hover de cada grupo.
+- `speech.read_group_on_hover_loud` activa voz mas fuerte (segun soporte del sistema).
+- `speech.hover_read_debounce_ms` controla el minimo tiempo entre lecturas por hover.
 - Si el YAML es invalido, se regeneran valores por defecto.
 
 La primera vez se genera una plantilla completa comentada automaticamente.

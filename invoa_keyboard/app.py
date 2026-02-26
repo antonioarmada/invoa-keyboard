@@ -197,6 +197,7 @@ def generate_group_colors(count: int, bg_hex: str, min_contrast: float = MIN_GRO
 class SelectionButton(QPushButton):
     shortClicked = Signal()
     longClicked = Signal()
+    hoverEntered = Signal()
 
     def __init__(
         self, long_click_ms: int, colors: dict[str, str], accent_color: str, parent: QWidget | None = None
@@ -250,6 +251,7 @@ class SelectionButton(QPushButton):
     def enterEvent(self, event) -> None:  # type: ignore[override]
         self._hovered = True
         self._apply_style()
+        self.hoverEntered.emit()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:  # type: ignore[override]
@@ -675,6 +677,8 @@ class KeyboardWindow(QMainWindow):
         self._group_colors: list[str] = []
         self._selection_buttons: list[SelectionButton] = []
         self._active_button_count = 0
+        self._last_hover_spoken_label = ""
+        self._last_hover_spoken_at = 0.0
         self._minimized = False
         self._previous_geometry = None
         self._bubble_diameter = 0
@@ -752,6 +756,7 @@ class KeyboardWindow(QMainWindow):
             button = SelectionButton(self._settings.interaction.long_click_ms, colors, accent, self)
             button.shortClicked.connect(lambda idx=index: self._on_group_short(idx))
             button.longClicked.connect(self._on_long_click)
+            button.hoverEntered.connect(lambda idx=index: self._on_group_hover(idx))
             button.setVisible(False)
             self._selection_buttons.append(button)
 
@@ -1013,6 +1018,34 @@ class KeyboardWindow(QMainWindow):
         if index < 0 or index >= len(self._current_groups):
             return
         self._handle_selection(self._current_groups[index])
+
+    def _spoken_text_for_group(self, group: list[str]) -> str:
+        if not group:
+            return ""
+        if len(group) == 1:
+            return group[0]
+        return f"{group[0]} a {group[-1]}"
+
+    def _on_group_hover(self, index: int) -> None:
+        if not self._settings.speech.enabled:
+            return
+        if not self._settings.speech.read_group_on_hover:
+            return
+        if index < 0 or index >= len(self._current_groups):
+            return
+
+        spoken = self._spoken_text_for_group(self._current_groups[index]).strip()
+        if not spoken:
+            return
+
+        now = time.monotonic()
+        debounce_seconds = max(0, self._settings.speech.hover_read_debounce_ms) / 1000.0
+        if spoken == self._last_hover_spoken_label and (now - self._last_hover_spoken_at) < debounce_seconds:
+            return
+
+        self._last_hover_spoken_label = spoken
+        self._last_hover_spoken_at = now
+        self._speech.speak(spoken, loud=self._settings.speech.read_group_on_hover_loud)
 
     def _on_long_click(self) -> None:
         if not self._settings.interaction.undo_on_long_click:

@@ -66,6 +66,12 @@ speech:
   voice: null
   # Velocidad de habla (1.0 normal)
   rate: 1.0
+  # Leer en voz alta el grupo al pasar el cursor
+  read_group_on_hover: true
+  # Usar voz mas fuerte para lectura por hover
+  read_group_on_hover_loud: true
+  # Tiempo minimo entre lecturas por hover (ms)
+  hover_read_debounce_ms: 350
 
 window:
   # Iniciar en pantalla completa

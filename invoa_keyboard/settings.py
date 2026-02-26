@@ -88,6 +88,12 @@ speech:
   voice: null
   # Velocidad de habla (1.0 normal)
   rate: 1.0
+  # Leer en voz alta el grupo al pasar el cursor
+  read_group_on_hover: false
+  # Usar voz mas fuerte para lectura por hover
+  read_group_on_hover_loud: true
+  # Tiempo minimo entre lecturas por hover (ms)
+  hover_read_debounce_ms: 350
 
 window:
   # Iniciar en pantalla completa
@@ -169,6 +175,9 @@ class SpeechSettings:
     engine: str = "system"
     voice: str | None = None
     rate: float = 1.0
+    read_group_on_hover: bool = False
+    read_group_on_hover_loud: bool = True
+    hover_read_debounce_ms: int = 350
 
 
 @dataclass
@@ -346,6 +355,9 @@ def _settings_to_dict(settings: Settings) -> dict[str, Any]:
             "engine": speech.engine,
             "voice": speech.voice,
             "rate": speech.rate,
+            "read_group_on_hover": speech.read_group_on_hover,
+            "read_group_on_hover_loud": speech.read_group_on_hover_loud,
+            "hover_read_debounce_ms": speech.hover_read_debounce_ms,
         },
         "window": {
             "start_fullscreen": window.start_fullscreen,
@@ -629,7 +641,20 @@ def load_settings(config_path: str | None = None) -> Settings:
     )
 
     speech_raw = _section(raw, "speech")
-    _warn_unknown_keys("speech", speech_raw, {"enabled", "auto_detect_engine", "engine", "voice", "rate"})
+    _warn_unknown_keys(
+        "speech",
+        speech_raw,
+        {
+            "enabled",
+            "auto_detect_engine",
+            "engine",
+            "voice",
+            "rate",
+            "read_group_on_hover",
+            "read_group_on_hover_loud",
+            "hover_read_debounce_ms",
+        },
+    )
     speech = SpeechSettings(
         enabled=_to_bool(speech_raw.get("enabled", defaults.speech.enabled), defaults.speech.enabled),
         auto_detect_engine=_to_bool(
@@ -638,6 +663,22 @@ def load_settings(config_path: str | None = None) -> Settings:
         engine=str(speech_raw.get("engine", defaults.speech.engine)),
         voice=None if speech_raw.get("voice") is None else str(speech_raw.get("voice")),
         rate=_clamp_float(_to_float(speech_raw.get("rate", defaults.speech.rate), defaults.speech.rate), 0.5, 2.0),
+        read_group_on_hover=_to_bool(
+            speech_raw.get("read_group_on_hover", defaults.speech.read_group_on_hover),
+            defaults.speech.read_group_on_hover,
+        ),
+        read_group_on_hover_loud=_to_bool(
+            speech_raw.get("read_group_on_hover_loud", defaults.speech.read_group_on_hover_loud),
+            defaults.speech.read_group_on_hover_loud,
+        ),
+        hover_read_debounce_ms=_clamp_int(
+            _to_int(
+                speech_raw.get("hover_read_debounce_ms", defaults.speech.hover_read_debounce_ms),
+                defaults.speech.hover_read_debounce_ms,
+            ),
+            0,
+            5000,
+        ),
     )
 
     window_raw = _section(raw, "window")

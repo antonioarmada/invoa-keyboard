@@ -6,24 +6,32 @@ import threading
 
 
 class SpeechOutput:
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, loud: bool = False) -> None:
         text = text.strip()
         if not text:
             return
         system = platform.system().lower()
         if system == "darwin":
-            self._run_async(["say", text])
+            if loud:
+                self._run_async(["say", "-r", "220", text])
+            else:
+                self._run_async(["say", text])
             return
         if system == "windows":
+            volume = 100 if loud else 80
+            rate = 1 if loud else 0
             command = (
                 "Add-Type -AssemblyName System.Speech;"
                 "$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                f"$speak.Volume={volume};"
+                f"$speak.Rate={rate};"
                 "$speak.Speak([Console]::In.ReadToEnd());"
             )
             self._run_async(["powershell", "-Command", command], text)
             return
         if system == "linux":
-            self._run_async(["espeak", text])
+            amplitude = "200" if loud else "120"
+            self._run_async(["espeak", "-a", amplitude, text])
             return
 
     def _run_async(self, args: list[str], stdin_text: str | None = None) -> None:
