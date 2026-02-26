@@ -1,0 +1,98 @@
+# Version del esquema de configuracion para futuras migraciones
+config_version: 1
+
+app:
+  # Idioma de la interfaz (actualmente informativo)
+  language: "es"
+  # Distribucion de letras (hoy: A-Z)
+  layout: "A-Z"
+
+interaction:
+  # Tiempo (ms) para considerar click largo (deshacer)
+  long_click_ms: 2000
+  # Habilita deshacer con click largo
+  undo_on_long_click: true
+  # Limite minimo permitido para click largo
+  min_long_click_ms: 500
+  # Limite maximo permitido para click largo
+  max_long_click_ms: 5000
+
+ui:
+  # Escala general de texto y controles
+  font_scale: 1.0
+  # Muestra la tira del alfabeto resaltada
+  show_alphabet_strip: true
+  show_actions:
+    # Mostrar boton borrar ultimo caracter
+    backspace: true
+    # Mostrar boton enviar al sistema
+    send: true
+    # Mostrar boton de voz (TTS)
+    speak: true
+  colors:
+    # Fondo principal
+    bg: "#000000"
+    # Color principal de texto/bordes
+    fg: "#FFFFFF"
+    # Color hover en botones
+    hover: "#333333"
+    # Color de resaltado general
+    highlight: "#FFD400"
+    # Fondo/acento del boton izquierdo
+    left_bg: "#00B7FF"
+    # Fondo/acento del boton derecho
+    right_bg: "#FF8A00"
+
+typing:
+  # Quitar espacios al inicio/fin antes de enviar
+  trim_before_send: true
+  # Limpiar buffer luego de enviar
+  clear_after_send: true
+  # Bloques maximos visibles en el visor
+  max_visible_blocks: 500
+
+output:
+  # Habilita escritura global al sistema operativo
+  enabled: true
+  # Modo de salida (global hoy; otros a futuro)
+  mode: "global"
+
+speech:
+  # Habilita sintesis de voz
+  enabled: true
+  # Detecta automaticamente motor del SO
+  auto_detect_engine: true
+  # Motor de voz (system por defecto)
+  engine: "system"
+  # Voz especifica (null = por defecto del sistema)
+  voice: null
+  # Velocidad de habla (1.0 normal)
+  rate: 1.0
+
+window:
+  # Iniciar en pantalla completa
+  start_fullscreen: false
+  # Iniciar minimizado (modo burbuja)
+  start_minimized: false
+  # Mantener siempre encima de otras ventanas
+  always_on_top: true
+  # Intervalo (ms) para reforzar always_on_top
+  on_top_refresh_ms: 1500
+  # Ventana sin bordes del sistema
+  frameless: true
+  # No tomar foco del teclado al mostrarse
+  ignore_focus: true
+  # Permitir mover ventana
+  movable: true
+  # Permitir redimensionar ventana
+  resizable: true
+
+accessibility:
+  # Mostrar aviso en macOS si faltan permisos
+  show_macos_permission_prompt: true
+
+experimental:
+  # Perfiles de configuracion (futuro)
+  profiles_enabled: false
+  # Telemetria (futuro)
+  telemetry_enabled: false

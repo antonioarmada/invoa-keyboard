@@ -540,18 +540,19 @@ class KeyboardWindow(QMainWindow):
         self._bubble_diameter = 0
 
         self.setWindowTitle("Teclado Ocular Binario")
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
-        self.setWindowFlag(Qt.FramelessWindowHint, True)
-        self.setWindowFlag(Qt.WindowDoesNotAcceptFocus, True)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, self._settings.window.always_on_top)
+        self.setWindowFlag(Qt.FramelessWindowHint, self._settings.window.frameless)
+        self.setWindowFlag(Qt.WindowDoesNotAcceptFocus, self._settings.window.ignore_focus)
         self.setWindowFlag(Qt.Tool, True)
-        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, self._settings.window.ignore_focus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.NoFocus)
         self._on_top_timer = QTimer(self)
-        self._on_top_timer.setInterval(1500)
+        self._on_top_timer.setInterval(self._settings.window.on_top_refresh_ms)
         self._on_top_timer.timeout.connect(self._ensure_on_top)
-        self._on_top_timer.start()
+        if self._settings.window.always_on_top:
+            self._on_top_timer.start()
         self._build_ui()
         self._apply_styles()
         self._update_view()
@@ -559,15 +560,20 @@ class KeyboardWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        self._ensure_on_top()
+        if self._settings.window.always_on_top:
+            self._ensure_on_top()
 
     def _ensure_on_top(self) -> None:
+        if not self._settings.window.always_on_top:
+            return
         if not (self.windowFlags() & Qt.WindowStaysOnTopHint):
             self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             self.show()
         self.raise_()
 
     def _notify_accessibility_if_needed(self) -> None:
+        if not self._settings.accessibility.show_macos_permission_prompt:
+            return
         trusted = self._output.macos_accessibility_trusted()
         if trusted is False:
             message = (
@@ -599,8 +605,8 @@ class KeyboardWindow(QMainWindow):
 
         left_bg = colors.get("left_bg", colors["bg"])
         right_bg = colors.get("right_bg", colors["bg"])
-        self._left_button = SelectionButton(self._settings.long_click_ms, colors, left_bg, self)
-        self._right_button = SelectionButton(self._settings.long_click_ms, colors, right_bg, self)
+        self._left_button = SelectionButton(self._settings.interaction.long_click_ms, colors, left_bg, self)
+        self._right_button = SelectionButton(self._settings.interaction.long_click_ms, colors, right_bg, self)
 
         self._left_button.shortClicked.connect(self._on_left_short)
         self._right_button.shortClicked.connect(self._on_right_short)
@@ -613,7 +619,7 @@ class KeyboardWindow(QMainWindow):
 
         self._text_view = QPlainTextEdit(self)
         self._text_view.setReadOnly(True)
-        self._text_view.setMaximumBlockCount(500)
+        self._text_view.setMaximumBlockCount(self._settings.typing.max_visible_blocks)
         self._text_view.setFocusPolicy(Qt.NoFocus)
         self._text_view.setViewportMargins(0, 0, 0, 0)
         self._text_view.document().setDocumentMargin(4)
@@ -641,11 +647,18 @@ class KeyboardWindow(QMainWindow):
         actions_row.addWidget(self._send_button, 0)
         actions_row.addWidget(self._speak_button, 0)
         actions_row.addStretch(1)
+        action_flags = self._settings.ui.show_actions
+        self._backspace_button.setVisible(action_flags.backspace)
+        self._send_button.setVisible(action_flags.send)
+        self._speak_button.setVisible(action_flags.speak)
+        self._actions_container.setVisible(any([action_flags.backspace, action_flags.send, action_flags.speak]))
 
         move_icon = svg_icon(MOVE_SVG.format(color=colors["fg"]), 64)
         resize_icon = svg_icon(RESIZE_SVG.format(color=colors["fg"]), 64)
         self._move_handle = MoveHandle(move_icon, colors, self)
         self._resize_handle = ResizeHandle(resize_icon, colors, self)
+        self._move_handle.setVisible(self._settings.window.movable)
+        self._resize_handle.setVisible(self._settings.window.resizable)
         self._minimize_button = IconButton(MINIMIZE_SVG, colors, colors["bg"], self)
         self._minimize_button.clicked.connect(self._on_minimize)
 
@@ -657,6 +670,7 @@ class KeyboardWindow(QMainWindow):
         controls_row.addWidget(self._resize_handle, 0)
 
         layout.addWidget(self._alphabet_strip, 0)
+        self._alphabet_strip.setVisible(self._settings.ui.show_alphabet_strip)
         layout.addLayout(buttons_row, 1)
         layout.addLayout(text_row, 0)
         layout.addWidget(self._actions_container, 0)
@@ -713,7 +727,7 @@ class KeyboardWindow(QMainWindow):
             return
 
         colors = self._settings.resolved_colors()
-        scale = max(self._settings.font_scale, 0.5)
+        scale = max(self._settings.ui.font_scale, 0.5)
 
         panel = getattr(self, "_main_panel", self)
         panel_layout = panel.layout()
@@ -739,7 +753,7 @@ class KeyboardWindow(QMainWindow):
             handle_size = max(36, int(base_d * 0.32))
             action_size = max(70, int(base_d * 0.8))
             text_h = max(60, int(font_size * 1.5))
-            actions_h = action_size
+            actions_h = action_size if self._actions_container.isVisible() else 0
             total_h = alphabet_h + max_widget_d + text_h + actions_h + handle_size + v_spacing * 4
             if total_h <= h_inner:
                 break
@@ -774,8 +788,12 @@ class KeyboardWindow(QMainWindow):
         self._send_button.set_base_size(action_size)
         self._speak_button.set_base_size(action_size)
         if self._actions_container is not None:
-            self._actions_container.setMaximumHeight(action_size + 6)
-            self._actions_container.setMinimumHeight(40)
+            if self._actions_container.isVisible():
+                self._actions_container.setMaximumHeight(action_size + 6)
+                self._actions_container.setMinimumHeight(40)
+            else:
+                self._actions_container.setMaximumHeight(0)
+                self._actions_container.setMinimumHeight(0)
 
         self._move_handle.set_base_size(handle_size)
         self._resize_handle.set_base_size(handle_size)
@@ -813,6 +831,8 @@ class KeyboardWindow(QMainWindow):
         self._handle_selection(self._right_group)
 
     def _on_long_click(self) -> None:
+        if not self._settings.interaction.undo_on_long_click:
+            return
         if not self._state.history:
             return
         self._state.group = self._state.history.pop()
@@ -846,6 +866,8 @@ class KeyboardWindow(QMainWindow):
         QMessageBox.warning(self, "Permisos requeridos", message)
 
     def _on_speak(self) -> None:
+        if not self._settings.speech.enabled:
+            return
         text = self._typed_text.strip()
         if not text:
             return
@@ -859,15 +881,20 @@ class KeyboardWindow(QMainWindow):
         self._text_view.moveCursor(QTextCursor.End)
 
     def _on_send(self) -> None:
-        text = self._typed_text.strip()
+        if not self._settings.output.enabled:
+            return
+        text = self._typed_text
+        if self._settings.typing.trim_before_send:
+            text = text.strip()
         if not text:
             return
         result = self._output.send_text(text)
         if not result.ok:
             self._show_output_error(result)
             return
-        self._typed_text = ""
-        self._text_view.setPlainText("")
+        if self._settings.typing.clear_after_send:
+            self._typed_text = ""
+            self._text_view.setPlainText("")
 
     def _on_minimize(self) -> None:
         if self._minimized:
@@ -900,8 +927,11 @@ def run_app(settings: Settings, fullscreen: bool) -> int:
     app = QApplication([])
     output = GlobalKeyboardOutput()
     window = KeyboardWindow(settings, output)
-    if fullscreen:
+    start_fullscreen = fullscreen or settings.window.start_fullscreen
+    if start_fullscreen:
         window.showFullScreen()
     else:
         window.show()
+        if settings.window.start_minimized:
+            window._on_minimize()
     return app.exec()
