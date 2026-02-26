@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -238,6 +239,14 @@ def default_settings() -> Settings:
 
 
 def settings_path() -> Path:
+    if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            config_root = Path.home() / "Library" / "Application Support"
+        elif sys.platform.startswith("win"):
+            config_root = Path.home() / "AppData" / "Roaming"
+        else:
+            config_root = Path.home() / ".config"
+        return config_root / "teclado-pantalla" / "settings.yml"
     return PROJECT_ROOT / "settings.yml"
 
 

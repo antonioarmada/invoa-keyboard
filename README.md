@@ -16,6 +16,44 @@ python main.py --fullscreen
 python main.py --config /ruta/a/settings.yml
 ```
 
+## Ejecutables (macOS y Windows)
+
+Se usa **PyInstaller** para generar ejecutables nativos.
+
+### macOS (`.app`)
+
+```bash
+bash scripts/build_macos.sh
+```
+
+Salida:
+- `dist-macos/TecladoOcular.app`
+
+Opcional:
+- `PYTHON_BIN=/ruta/python3 bash scripts/build_macos.sh`
+
+### Windows (`.exe`)
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+Salida:
+- `dist-windows/TecladoOcular/TecladoOcular.exe`
+
+Importante:
+- PyInstaller no compila `Windows .exe` desde macOS (ni `macOS .app` desde Windows) de forma nativa.
+- Para generar ambos desde un solo flujo, usar CI con runners nativos.
+
+### CI (GitHub Actions)
+
+Workflow incluido:
+- `.github/workflows/build-desktop.yml`
+
+Este workflow genera artefactos:
+- `teclado-macos`
+- `teclado-windows`
+
 ## Configuracion
 
 El archivo por defecto es el del proyecto:
