@@ -84,6 +84,12 @@ MINIMIZE_SVG = """
 </svg>
 """
 
+CLOSE_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 6l12 12M18 6l-12 12" />
+</svg>
+"""
+
 SEND_SVG = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M22 2L11 13" />
@@ -408,10 +414,13 @@ class IconButton(QPushButton):
 
 
 class MoveHandle(QPushButton):
-    def __init__(self, icon: QIcon, colors: dict[str, str], parent: QWidget | None = None) -> None:
+    def __init__(self, svg_template: str, colors: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._colors = colors
-        self.setIcon(icon)
+        self._svg_template = svg_template
+        self._base_size = 0
+        self._icon_size = 0
+        self._hovered = False
         self.setCursor(Qt.SizeAllCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self._drag_origin = None
@@ -419,13 +428,17 @@ class MoveHandle(QPushButton):
         self._apply_style()
 
     def set_base_size(self, size: int) -> None:
-        self.setFixedSize(size, size)
-        icon_size = int(size * 0.6)
-        self.setIconSize(QSize(icon_size, icon_size))
+        self._base_size = max(1, size)
+        self.setFixedSize(self._base_size, self._base_size)
+        self._icon_size = int(self._base_size * 0.6)
+        self.setIconSize(QSize(self._icon_size, self._icon_size))
+        self._apply_style()
 
     def _apply_style(self) -> None:
         bg = self._colors["bg"]
         fg = self._colors["fg"]
+        if self._hovered:
+            bg, fg = fg, bg
         self.setStyleSheet(
             f"""
             QPushButton {{
@@ -436,6 +449,18 @@ class MoveHandle(QPushButton):
             }}
             """
         )
+        size = max(16, self._icon_size or 16)
+        self.setIcon(svg_icon(self._svg_template.format(color=fg), size))
+
+    def enterEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = False
+        self._apply_style()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton:
@@ -460,10 +485,13 @@ class MoveHandle(QPushButton):
 
 
 class ResizeHandle(QPushButton):
-    def __init__(self, icon: QIcon, colors: dict[str, str], parent: QWidget | None = None) -> None:
+    def __init__(self, svg_template: str, colors: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._colors = colors
-        self.setIcon(icon)
+        self._svg_template = svg_template
+        self._base_size = 0
+        self._icon_size = 0
+        self._hovered = False
         self.setCursor(Qt.SizeFDiagCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self._drag_origin = None
@@ -471,13 +499,17 @@ class ResizeHandle(QPushButton):
         self._apply_style()
 
     def set_base_size(self, size: int) -> None:
-        self.setFixedSize(size, size)
-        icon_size = int(size * 0.6)
-        self.setIconSize(QSize(icon_size, icon_size))
+        self._base_size = max(1, size)
+        self.setFixedSize(self._base_size, self._base_size)
+        self._icon_size = int(self._base_size * 0.6)
+        self.setIconSize(QSize(self._icon_size, self._icon_size))
+        self._apply_style()
 
     def _apply_style(self) -> None:
         bg = self._colors["bg"]
         fg = self._colors["fg"]
+        if self._hovered:
+            bg, fg = fg, bg
         self.setStyleSheet(
             f"""
             QPushButton {{
@@ -488,6 +520,18 @@ class ResizeHandle(QPushButton):
             }}
             """
         )
+        size = max(16, self._icon_size or 16)
+        self.setIcon(svg_icon(self._svg_template.format(color=fg), size))
+
+    def enterEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = True
+        self._apply_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._hovered = False
+        self._apply_style()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton:
@@ -749,18 +793,19 @@ class KeyboardWindow(QMainWindow):
         self._speak_button.setVisible(action_flags.speak)
         self._actions_container.setVisible(any([action_flags.backspace, action_flags.send, action_flags.speak]))
 
-        move_icon = svg_icon(MOVE_SVG.format(color=colors["fg"]), 64)
-        resize_icon = svg_icon(RESIZE_SVG.format(color=colors["fg"]), 64)
-        self._move_handle = MoveHandle(move_icon, colors, self)
-        self._resize_handle = ResizeHandle(resize_icon, colors, self)
+        self._move_handle = MoveHandle(MOVE_SVG, colors, self)
+        self._resize_handle = ResizeHandle(RESIZE_SVG, colors, self)
         self._move_handle.setVisible(self._settings.window.movable)
         self._resize_handle.setVisible(self._settings.window.resizable)
+        self._close_button = IconButton(CLOSE_SVG, colors, colors["bg"], self)
+        self._close_button.clicked.connect(self._on_close)
         self._minimize_button = IconButton(MINIMIZE_SVG, colors, colors["bg"], self)
         self._minimize_button.clicked.connect(self._on_minimize)
 
         controls_row = QHBoxLayout()
         controls_row.setSpacing(10)
         controls_row.addStretch(1)
+        controls_row.addWidget(self._close_button, 0)
         controls_row.addWidget(self._minimize_button, 0)
         controls_row.addWidget(self._move_handle, 0)
         controls_row.addWidget(self._resize_handle, 0)
@@ -936,6 +981,7 @@ class KeyboardWindow(QMainWindow):
 
         self._move_handle.set_base_size(handle_size)
         self._resize_handle.set_base_size(handle_size)
+        self._close_button.set_base_size(handle_size)
         self._minimize_button.set_base_size(handle_size)
 
     def _update_view(self) -> None:
@@ -1042,6 +1088,13 @@ class KeyboardWindow(QMainWindow):
         self._stack.setCurrentWidget(self._min_panel)
         self._apply_minimized_size()
         self._ensure_on_top()
+
+    def _on_close(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+            return
+        self.close()
 
     def _on_restore(self) -> None:
         if not self._minimized:
