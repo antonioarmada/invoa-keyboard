@@ -27,11 +27,12 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QWidget,
     QStackedLayout,
 )
 
-from .logic import LETTERS, label_for_group, split_group
+from .logic import LETTERS, label_for_group, split_into_groups
 from .output import GlobalKeyboardOutput, OutputResult
 from .settings import Settings
 from .speech import SpeechOutput
@@ -99,6 +100,92 @@ BACKSPACE_SVG = """
 
 BUTTON_HOVER_SCALE = 1.0
 BUTTON_WIDTH_FACTOR = 1.2
+MIN_GROUP_COLOR_CONTRAST = 7.0
+GROUP_SEED_COLORS = [
+    "#0072F5",
+    "#00A63E",
+    "#8C4DFF",
+    "#C44A00",
+    "#008C8C",
+    "#2E6DFF",
+    "#B04A00",
+    "#006699",
+    "#666600",
+    "#006666",
+]
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    value = hex_color.lstrip("#")
+    if len(value) != 6:
+        return 0.0, 0.0, 0.0
+    r = int(value[0:2], 16) / 255.0
+    g = int(value[2:4], 16) / 255.0
+    b = int(value[4:6], 16) / 255.0
+    return r, g, b
+
+
+def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
+    r = max(0, min(255, int(round(rgb[0] * 255))))
+    g = max(0, min(255, int(round(rgb[1] * 255))))
+    b = max(0, min(255, int(round(rgb[2] * 255))))
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def _mix_rgb(a: tuple[float, float, float], b: tuple[float, float, float], t: float) -> tuple[float, float, float]:
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
+
+
+def _linearize(c: float) -> float:
+    if c <= 0.03928:
+        return c / 12.92
+    return ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(rgb: tuple[float, float, float]) -> float:
+    r, g, b = (_linearize(rgb[0]), _linearize(rgb[1]), _linearize(rgb[2]))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast_ratio(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    la = _relative_luminance(a)
+    lb = _relative_luminance(b)
+    lighter = max(la, lb)
+    darker = min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _adjust_color_for_contrast(hex_color: str, bg_hex: str, min_contrast: float) -> str:
+    color = _hex_to_rgb(hex_color)
+    background = _hex_to_rgb(bg_hex)
+    initial_hex = _rgb_to_hex(color)
+    if _contrast_ratio(_hex_to_rgb(initial_hex), background) >= min_contrast:
+        return initial_hex
+
+    white = (1.0, 1.0, 1.0)
+    black = (0.0, 0.0, 0.0)
+    best_candidate = color
+    best_t = 2.0
+    for target in (white, black):
+        for step in range(1, 101):
+            t = step / 100.0
+            mixed = _mix_rgb(color, target, t)
+            hex_mixed = _rgb_to_hex(mixed)
+            if _contrast_ratio(_hex_to_rgb(hex_mixed), background) >= min_contrast:
+                if t < best_t:
+                    best_t = t
+                    best_candidate = _hex_to_rgb(hex_mixed)
+                break
+        else:
+            mixed = target
+            if _contrast_ratio(mixed, background) > _contrast_ratio(best_candidate, background):
+                best_candidate = mixed
+    return _rgb_to_hex(best_candidate)
+
+
+def generate_group_colors(count: int, bg_hex: str, min_contrast: float = MIN_GROUP_COLOR_CONTRAST) -> list[str]:
+    usable = max(0, min(count, len(GROUP_SEED_COLORS)))
+    return [_adjust_color_for_contrast(seed, bg_hex, min_contrast) for seed in GROUP_SEED_COLORS[:usable]]
 
 
 class SelectionButton(QPushButton):
@@ -170,10 +257,14 @@ class SelectionButton(QPushButton):
         self._base_height = self._base_diameter
         self._base_width = max(1, int(self._base_diameter * BUTTON_WIDTH_FACTOR))
         self.setMaximumSize(self._base_width, self._base_height)
-        self.setMinimumSize(70, 60)
+        self.setMinimumSize(44, 40)
         self.update()
 
     def _apply_style(self) -> None:
+        self.update()
+
+    def set_accent(self, accent_color: str) -> None:
+        self._accent = accent_color
         self.update()
 
     def _label_scale(self) -> float:
@@ -426,14 +517,17 @@ class AlphabetStrip(QWidget):
     def __init__(self, letters: Iterable[str], colors: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._letters = list(letters)
-        self._left_highlight = set(self._letters)
-        self._right_highlight: set[str] = set()
+        self._highlight_groups: list[set[str]] = [set(self._letters)]
+        self._highlight_colors: list[QColor] = [QColor("#0072F5")]
         self._colors = colors
         self.setMinimumHeight(48)
 
-    def set_highlight_groups(self, left_letters: Iterable[str], right_letters: Iterable[str]) -> None:
-        self._left_highlight = set(left_letters)
-        self._right_highlight = set(right_letters)
+    def set_highlight_groups(self, groups: Iterable[Iterable[str]], colors: Iterable[str]) -> None:
+        self._highlight_groups = [set(group) for group in groups]
+        self._highlight_colors = [QColor(color) for color in colors]
+        if len(self._highlight_colors) < len(self._highlight_groups):
+            missing = len(self._highlight_groups) - len(self._highlight_colors)
+            self._highlight_colors.extend([QColor("#0072F5")] * missing)
         self.update()
 
     def set_colors(self, colors: dict[str, str]) -> None:
@@ -445,8 +539,6 @@ class AlphabetStrip(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         fg = QColor("#000000")
         outline = QColor(self._colors["fg"])
-        left_color = QColor(self._colors.get("left_bg", "#0055FF"))
-        right_color = QColor(self._colors.get("right_bg", "#FF6A00"))
 
         height = self.height()
         width = self.width()
@@ -501,10 +593,12 @@ class AlphabetStrip(QWidget):
             radius = bar_height // 2
             painter.drawRoundedRect(bar_left, bar_top, bar_right - bar_left, bar_height, radius, radius)
 
-        left_indices = [i for i, letter in enumerate(self._letters) if letter in self._left_highlight]
-        right_indices = [i for i, letter in enumerate(self._letters) if letter in self._right_highlight]
-        draw_bar(left_indices, left_color)
-        draw_bar(right_indices, right_color)
+        for idx, highlight_group in enumerate(self._highlight_groups):
+            if not highlight_group:
+                continue
+            indices = [i for i, letter in enumerate(self._letters) if letter in highlight_group]
+            color = self._highlight_colors[idx] if idx < len(self._highlight_colors) else QColor("#0072F5")
+            draw_bar(indices, color)
 
         x = start_x
         for idx, letter in enumerate(self._letters):
@@ -533,8 +627,10 @@ class KeyboardWindow(QMainWindow):
         self._speech = SpeechOutput()
         self._state = SelectionState(group=LETTERS.copy(), history=[])
         self._typed_text = ""
-        self._left_group: list[str] = []
-        self._right_group: list[str] = []
+        self._current_groups: list[list[str]] = []
+        self._group_colors: list[str] = []
+        self._selection_buttons: list[SelectionButton] = []
+        self._active_button_count = 0
         self._minimized = False
         self._previous_geometry = None
         self._bubble_diameter = 0
@@ -599,23 +695,23 @@ class KeyboardWindow(QMainWindow):
 
         self._alphabet_strip = AlphabetStrip(LETTERS, colors, self)
 
-        buttons_row = QHBoxLayout()
-        buttons_row.setSpacing(64)
-        buttons_row.addStretch(1)
+        self._buttons_container = QWidget(self)
+        self._buttons_grid = QGridLayout(self._buttons_container)
+        self._buttons_grid.setContentsMargins(0, 0, 0, 0)
+        self._buttons_grid.setHorizontalSpacing(18)
+        self._buttons_grid.setVerticalSpacing(18)
+        self._buttons_grid.setAlignment(Qt.AlignCenter)
 
-        left_bg = colors.get("left_bg", colors["bg"])
-        right_bg = colors.get("right_bg", colors["bg"])
-        self._left_button = SelectionButton(self._settings.interaction.long_click_ms, colors, left_bg, self)
-        self._right_button = SelectionButton(self._settings.interaction.long_click_ms, colors, right_bg, self)
+        default_group_colors = generate_group_colors(10, colors["bg"], MIN_GROUP_COLOR_CONTRAST)
+        for index in range(10):
+            accent = default_group_colors[index]
+            button = SelectionButton(self._settings.interaction.long_click_ms, colors, accent, self)
+            button.shortClicked.connect(lambda idx=index: self._on_group_short(idx))
+            button.longClicked.connect(self._on_long_click)
+            button.setVisible(False)
+            self._selection_buttons.append(button)
 
-        self._left_button.shortClicked.connect(self._on_left_short)
-        self._right_button.shortClicked.connect(self._on_right_short)
-        self._left_button.longClicked.connect(self._on_long_click)
-        self._right_button.longClicked.connect(self._on_long_click)
-
-        buttons_row.addWidget(self._left_button, 0)
-        buttons_row.addWidget(self._right_button, 0)
-        buttons_row.addStretch(1)
+        self._relayout_selection_buttons(0)
 
         self._text_view = QPlainTextEdit(self)
         self._text_view.setReadOnly(True)
@@ -671,7 +767,7 @@ class KeyboardWindow(QMainWindow):
 
         layout.addWidget(self._alphabet_strip, 0)
         self._alphabet_strip.setVisible(self._settings.ui.show_alphabet_strip)
-        layout.addLayout(buttons_row, 1)
+        layout.addWidget(self._buttons_container, 1)
         layout.addLayout(text_row, 0)
         layout.addWidget(self._actions_container, 0)
         layout.addLayout(controls_row, 0)
@@ -717,6 +813,41 @@ class KeyboardWindow(QMainWindow):
             """
         )
 
+    def _group_grid_shape(self, count: int) -> tuple[int, int]:
+        if count <= 0:
+            return 2, 1
+        if count == 2:
+            return 2, 1
+        if count == 3:
+            return 3, 1
+        if count == 4:
+            return 2, 2
+        if count <= 6:
+            return 3, 2
+        if count <= 8:
+            return 4, 2
+        if count == 9:
+            return 3, 3
+        return 5, 2
+
+    def _relayout_selection_buttons(self, visible_count: int) -> None:
+        self._active_button_count = max(0, min(visible_count, len(self._selection_buttons)))
+        while self._buttons_grid.count():
+            item = self._buttons_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self._buttons_container)
+
+        columns, _ = self._group_grid_shape(max(2, self._active_button_count))
+        for index, button in enumerate(self._selection_buttons):
+            is_visible = index < self._active_button_count
+            button.setVisible(is_visible)
+            if not is_visible:
+                continue
+            row = index // columns
+            col = index % columns
+            self._buttons_grid.addWidget(button, row, col)
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self._update_fonts_and_sizes()
@@ -743,41 +874,49 @@ class KeyboardWindow(QMainWindow):
             h_inner = max(200, self.height())
             v_spacing = 18
 
-        buttons_gap = 64  # must match buttons_row.setSpacing(...)
-        max_widget_d = max(160, int((w_inner - buttons_gap) / (2 * BUTTON_WIDTH_FACTOR)))
+        visible_count = max(1, self._active_button_count)
+        columns, rows = self._group_grid_shape(visible_count)
+        h_gap = self._buttons_grid.horizontalSpacing()
+        v_gap = self._buttons_grid.verticalSpacing()
+        if h_gap < 0:
+            h_gap = 18
+        if v_gap < 0:
+            v_gap = 18
+        max_widget_d = max(90, int((w_inner - h_gap * (columns - 1)) / (columns * BUTTON_WIDTH_FACTOR)))
 
         for _ in range(6):
-            base_d = max(110, int(max_widget_d / BUTTON_HOVER_SCALE))
-            font_size = max(26, int(base_d * 0.58 * scale))
-            alphabet_h = max(60, int(font_size * 1.4))
-            handle_size = max(36, int(base_d * 0.32))
-            action_size = max(70, int(base_d * 0.8))
-            text_h = max(60, int(font_size * 1.5))
+            base_d = max(64, int(max_widget_d / BUTTON_HOVER_SCALE))
+            font_size = max(16, int(base_d * 0.48 * scale))
+            alphabet_h = max(52, int(font_size * 1.35))
+            handle_size = max(32, int(base_d * 0.30))
+            action_size = max(58, int(base_d * 0.70))
+            text_h = max(54, int(font_size * 1.45))
+            buttons_h = rows * max_widget_d + max(0, rows - 1) * v_gap
             actions_h = action_size if self._actions_container.isVisible() else 0
-            total_h = alphabet_h + max_widget_d + text_h + actions_h + handle_size + v_spacing * 4
+            total_h = alphabet_h + buttons_h + text_h + actions_h + handle_size + v_spacing * 4
             if total_h <= h_inner:
                 break
             shrink = h_inner / max(total_h, 1)
             max_widget_d = max(80, int(max_widget_d * shrink))
 
-        base_d = max(110, int(max_widget_d / BUTTON_HOVER_SCALE))
-        base_d = int(base_d * 1.1)
+        base_d = max(64, int(max_widget_d / BUTTON_HOVER_SCALE))
+        base_d = int(base_d * 1.05)
         self._bubble_diameter = base_d
-        font_size = max(26, int(base_d * 0.58 * scale))
-        alphabet_h = max(60, int(font_size * 1.4))
-        handle_size = max(36, int(base_d * 0.32))
-        action_size = max(70, int(base_d * 0.8))
-        text_h = max(60, int(font_size * 1.5))
+        font_size = max(16, int(base_d * 0.48 * scale))
+        alphabet_h = max(52, int(font_size * 1.35))
+        handle_size = max(32, int(base_d * 0.30))
+        action_size = max(58, int(base_d * 0.70))
+        text_h = max(54, int(font_size * 1.45))
 
-        self._left_button.set_base_style(base_d, font_size)
-        self._right_button.set_base_style(base_d, font_size)
+        for index in range(self._active_button_count):
+            self._selection_buttons[index].set_base_style(base_d, font_size)
 
         text_font = QFont()
         text_font.setPointSize(font_size)
         text_font.setBold(True)
         self._text_view.setFont(text_font)
         self._text_view.setMaximumHeight(text_h)
-        self._text_view.setMinimumHeight(60)
+        self._text_view.setMinimumHeight(50)
         self._apply_text_style()
 
         self._alphabet_strip.set_colors(colors)
@@ -801,34 +940,33 @@ class KeyboardWindow(QMainWindow):
 
     def _update_view(self) -> None:
         group = self._state.group
-        if len(group) <= 1:
-            self._alphabet_strip.set_highlight_groups(group, [])
-        else:
-            left, right = split_group(group)
-            self._alphabet_strip.set_highlight_groups(left, right)
+        colors = self._settings.resolved_colors()
+        accent_colors = generate_group_colors(max(1, len(group)), colors["bg"], MIN_GROUP_COLOR_CONTRAST)
 
         if len(group) <= 1:
-            self._left_button.setText("")
-            self._right_button.setText("")
-            self._left_button.setEnabled(False)
-            self._right_button.setEnabled(False)
+            self._current_groups = []
+            self._group_colors = accent_colors[:1]
+            self._alphabet_strip.set_highlight_groups([group], self._group_colors)
+            self._relayout_selection_buttons(0)
             return
 
-        left, right = split_group(group)
-        self._left_group = left
-        self._right_group = right
+        self._current_groups = split_into_groups(group, self._settings.interaction.group_count)
+        self._group_colors = accent_colors[: len(self._current_groups)]
+        self._alphabet_strip.set_highlight_groups(self._current_groups, self._group_colors)
+        self._relayout_selection_buttons(len(self._current_groups))
 
-        self._left_button.setText(label_for_group(left))
-        self._right_button.setText(label_for_group(right))
-        self._left_button.setEnabled(True)
-        self._right_button.setEnabled(True)
+        for index, subgroup in enumerate(self._current_groups):
+            button = self._selection_buttons[index]
+            button.setText(label_for_group(subgroup))
+            button.setEnabled(True)
+            button.set_accent(self._group_colors[index])
+
         self._update_fonts_and_sizes()
 
-    def _on_left_short(self) -> None:
-        self._handle_selection(self._left_group)
-
-    def _on_right_short(self) -> None:
-        self._handle_selection(self._right_group)
+    def _on_group_short(self, index: int) -> None:
+        if index < 0 or index >= len(self._current_groups):
+            return
+        self._handle_selection(self._current_groups[index])
 
     def _on_long_click(self) -> None:
         if not self._settings.interaction.undo_on_long_click:

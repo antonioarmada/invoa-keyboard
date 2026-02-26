@@ -13,7 +13,11 @@ def test_creates_default_yaml_if_missing(tmp_path: Path) -> None:
     assert config_path.exists()
     content = config_path.read_text(encoding="utf-8")
     assert "# Version del esquema de configuracion" in content
+    assert "group_count: 2" in content
+    assert "left_bg" not in content
+    assert "right_bg" not in content
     defaults = default_settings()
+    assert settings.interaction.group_count == 2
     assert settings.interaction.long_click_ms == defaults.interaction.long_click_ms
     assert settings.ui.colors["bg"] == defaults.ui.colors["bg"]
 
@@ -37,6 +41,7 @@ app:
   language: "es"
   layout: "A-Z"
 interaction:
+  group_count: 5
   long_click_ms: 1800
   undo_on_long_click: false
   min_long_click_ms: 700
@@ -85,6 +90,7 @@ experimental:
     settings = load_settings(str(config_path))
 
     assert settings.config_version == 2
+    assert settings.interaction.group_count == 5
     assert settings.interaction.long_click_ms == 1800
     assert settings.interaction.undo_on_long_click is False
     assert settings.ui.font_scale == 1.3
@@ -120,6 +126,7 @@ def test_clamps_and_validation_rules(tmp_path: Path) -> None:
     config_path.write_text(
         """
 interaction:
+  group_count: 99
   min_long_click_ms: 1000
   max_long_click_ms: 1200
   long_click_ms: 9999
@@ -127,6 +134,7 @@ ui:
   font_scale: 9.0
   colors:
     bg: "not-a-color"
+    left_bg: "#00B7FF"
 window:
   on_top_refresh_ms: 10
 """.strip(),
@@ -135,10 +143,27 @@ window:
 
     settings = load_settings(str(config_path))
 
+    assert settings.interaction.group_count == 10
     assert settings.interaction.long_click_ms == 1200
     assert settings.ui.font_scale == 2.5
     assert settings.ui.colors["bg"] == "#000000"
+    assert "left_bg" not in settings.ui.colors
     assert settings.window.on_top_refresh_ms == 250
+
+
+def test_group_count_clamps_low(tmp_path: Path) -> None:
+    config_path = tmp_path / "settings.yml"
+    config_path.write_text(
+        """
+interaction:
+  group_count: 0
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(str(config_path))
+
+    assert settings.interaction.group_count == 2
 
 
 def test_toggles_are_applied(tmp_path: Path) -> None:

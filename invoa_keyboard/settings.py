@@ -6,17 +6,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from platformdirs import user_config_path
-
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_COLORS: dict[str, str] = {
     "bg": "#000000",
     "fg": "#FFFFFF",
     "hover": "#333333",
     "highlight": "#FFD400",
-    "left_bg": "#00B7FF",
-    "right_bg": "#FF8A00",
 }
 
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -33,6 +30,8 @@ app:
   layout: "A-Z"
 
 interaction:
+  # Cantidad de grupos por nivel de seleccion (2 a 10)
+  group_count: 2
   # Tiempo (ms) para considerar click largo (deshacer)
   long_click_ms: 2000
   # Habilita deshacer con click largo
@@ -63,10 +62,6 @@ ui:
     hover: "#333333"
     # Color de resaltado general
     highlight: "#FFD400"
-    # Fondo/acento del boton izquierdo
-    left_bg: "#00B7FF"
-    # Fondo/acento del boton derecho
-    right_bg: "#FF8A00"
 
 typing:
   # Quitar espacios al inicio/fin antes de enviar
@@ -132,6 +127,7 @@ class AppSettings:
 
 @dataclass
 class InteractionSettings:
+    group_count: int = 2
     long_click_ms: int = 2000
     undo_on_long_click: bool = True
     min_long_click_ms: int = 500
@@ -233,7 +229,7 @@ def default_settings() -> Settings:
 
 
 def settings_path() -> Path:
-    return user_config_path("InvoaKeyboard") / "settings.yml"
+    return PROJECT_ROOT / "settings.yml"
 
 
 def _to_bool(value: Any, default: bool) -> bool:
@@ -319,6 +315,7 @@ def _settings_to_dict(settings: Settings) -> dict[str, Any]:
             "layout": app.layout,
         },
         "interaction": {
+            "group_count": interaction.group_count,
             "long_click_ms": interaction.long_click_ms,
             "undo_on_long_click": interaction.undo_on_long_click,
             "min_long_click_ms": interaction.min_long_click_ms,
@@ -546,7 +543,12 @@ def load_settings(config_path: str | None = None) -> Settings:
     _warn_unknown_keys(
         "interaction",
         interaction_raw,
-        {"long_click_ms", "undo_on_long_click", "min_long_click_ms", "max_long_click_ms"},
+        {"group_count", "long_click_ms", "undo_on_long_click", "min_long_click_ms", "max_long_click_ms"},
+    )
+    group_count = _clamp_int(
+        _to_int(interaction_raw.get("group_count", defaults.interaction.group_count), defaults.interaction.group_count),
+        2,
+        10,
     )
     min_long_click_ms = _to_int(
         interaction_raw.get("min_long_click_ms", defaults.interaction.min_long_click_ms),
@@ -564,6 +566,7 @@ def load_settings(config_path: str | None = None) -> Settings:
     )
     long_click_ms = _clamp_int(long_click_ms, min_long_click_ms, max_long_click_ms)
     interaction = InteractionSettings(
+        group_count=group_count,
         long_click_ms=long_click_ms,
         undo_on_long_click=_to_bool(
             interaction_raw.get("undo_on_long_click", defaults.interaction.undo_on_long_click),

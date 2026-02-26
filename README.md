@@ -18,10 +18,8 @@ python main.py --config /ruta/a/settings.yml
 
 ## Configuracion
 
-El archivo se crea en:
-- Windows: `%APPDATA%/InvoaKeyboard/settings.yml`
-- macOS: `~/Library/Application Support/InvoaKeyboard/settings.yml`
-- Linux: `~/.config/InvoaKeyboard/settings.yml`
+El archivo por defecto es el del proyecto:
+- `settings.yml` (raiz de este repositorio)
 
 Formato soportado en runtime: **YAML**.
 
@@ -36,6 +34,8 @@ app:
   layout: "A-Z"
 
 interaction:
+  # Cantidad de grupos por nivel de seleccion (2 a 10)
+  group_count: 2
   # Tiempo (ms) para considerar click largo (deshacer)
   long_click_ms: 2000
   # Habilita deshacer con click largo
@@ -60,10 +60,12 @@ ui:
 ```
 
 Notas de validacion:
+- `interaction.group_count` se limita entre `2` y `10`.
 - `interaction.long_click_ms` se limita entre `min_long_click_ms` y `max_long_click_ms`.
 - `ui.font_scale` se limita entre `0.5` y `2.5`.
 - `window.on_top_refresh_ms` se limita a un minimo de `250`.
 - Colores invalidos vuelven al valor por defecto.
+- Los colores de grupos se asignan automaticamente con alto contraste (>= 7.0).
 - Si el YAML es invalido, se regeneran valores por defecto.
 
 La primera vez se genera una plantilla completa comentada automaticamente.

@@ -8,6 +8,8 @@ app:
   layout: "A-Z"
 
 interaction:
+  # Cantidad de grupos por nivel de seleccion (2 a 10)
+  group_count: 5
   # Tiempo (ms) para considerar click largo (deshacer)
   long_click_ms: 2000
   # Habilita deshacer con click largo
@@ -38,10 +40,6 @@ ui:
     hover: "#333333"
     # Color de resaltado general
     highlight: "#FFD400"
-    # Fondo/acento del boton izquierdo
-    left_bg: "#00B7FF"
-    # Fondo/acento del boton derecho
-    right_bg: "#FF8A00"
 
 typing:
   # Quitar espacios al inicio/fin antes de enviar
