@@ -41,6 +41,13 @@ Opcional:
 Salida:
 - `dist-windows/TecladoOcular/TecladoOcular.exe`
 
+Configuracion en ejecutable:
+- La app busca primero `settings.yml` junto al ejecutable (modo portable).
+- Si esa carpeta no es escribible, usa carpeta de usuario:
+  - macOS: `~/Library/Application Support/teclado-pantalla/settings.yml`
+  - Windows: `%APPDATA%\teclado-pantalla\settings.yml`
+  - Linux: `$XDG_CONFIG_HOME/teclado-pantalla/settings.yml` o `~/.config/teclado-pantalla/settings.yml`
+
 Importante:
 - PyInstaller no compila `Windows .exe` desde macOS (ni `macOS .app` desde Windows) de forma nativa.
 - Para generar ambos desde un solo flujo, usar CI con runners nativos.

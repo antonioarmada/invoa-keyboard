@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from invoa_keyboard import settings as settings_module
 from invoa_keyboard.settings import default_settings, load_settings
 
 
@@ -207,3 +209,56 @@ speech:
     assert settings.typing.clear_after_send is False
     assert settings.output.enabled is False
     assert settings.speech.enabled is False
+
+
+def test_frozen_prefers_portable_settings_next_to_exe(tmp_path: Path, monkeypatch) -> None:
+    exe_dir = tmp_path / "portable"
+    exe_dir.mkdir()
+    exe_path = exe_dir / "TecladoOcular.exe"
+    exe_path.write_text("", encoding="utf-8")
+    portable_settings = exe_dir / "settings.yml"
+    portable_settings.write_text("interaction:\n  group_count: 3\n", encoding="utf-8")
+
+    monkeypatch.setattr(settings_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(settings_module.sys, "executable", str(exe_path))
+    monkeypatch.setattr(settings_module.sys, "platform", "win32")
+
+    resolved = settings_module.settings_path()
+    assert resolved == portable_settings
+
+
+def test_frozen_uses_portable_path_when_writable(tmp_path: Path, monkeypatch) -> None:
+    exe_dir = tmp_path / "portable"
+    exe_dir.mkdir()
+    exe_path = exe_dir / "TecladoOcular.exe"
+    exe_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(settings_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(settings_module.sys, "executable", str(exe_path))
+    monkeypatch.setattr(settings_module.sys, "platform", "win32")
+
+    resolved = settings_module.settings_path()
+    assert resolved == exe_dir / "settings.yml"
+
+
+def test_frozen_falls_back_to_user_config_if_portable_not_writable(tmp_path: Path, monkeypatch) -> None:
+    exe_dir = tmp_path / "readonly"
+    exe_dir.mkdir()
+    exe_path = exe_dir / "TecladoOcular"
+    exe_path.write_text("", encoding="utf-8")
+    exe_dir.chmod(0o555)
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setattr(settings_module.Path, "home", lambda: home_dir)
+    monkeypatch.setattr(settings_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(settings_module.sys, "executable", str(exe_path))
+    monkeypatch.setattr(settings_module.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home_dir / ".cfg"))
+
+    try:
+        resolved = settings_module.settings_path()
+    finally:
+        exe_dir.chmod(0o755)
+
+    assert resolved == home_dir / ".cfg" / "teclado-pantalla" / "settings.yml"

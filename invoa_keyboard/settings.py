@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -238,16 +239,43 @@ def default_settings() -> Settings:
     )
 
 
-def settings_path() -> Path:
-    if getattr(sys, "frozen", False):
-        if sys.platform == "darwin":
-            config_root = Path.home() / "Library" / "Application Support"
-        elif sys.platform.startswith("win"):
+def _portable_settings_path() -> Path:
+    executable = Path(sys.executable).resolve()
+    if sys.platform == "darwin":
+        for parent in executable.parents:
+            if parent.suffix == ".app":
+                return parent.parent / "settings.yml"
+    return executable.parent / "settings.yml"
+
+
+def _user_settings_path() -> Path:
+    if sys.platform == "darwin":
+        config_root = Path.home() / "Library" / "Application Support"
+    elif sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            config_root = Path(appdata)
+        else:
             config_root = Path.home() / "AppData" / "Roaming"
+    else:
+        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config_home:
+            config_root = Path(xdg_config_home)
         else:
             config_root = Path.home() / ".config"
-        return config_root / "teclado-pantalla" / "settings.yml"
-    return PROJECT_ROOT / "settings.yml"
+    return config_root / "teclado-pantalla" / "settings.yml"
+
+
+def settings_path() -> Path:
+    if not getattr(sys, "frozen", False):
+        return PROJECT_ROOT / "settings.yml"
+
+    portable_path = _portable_settings_path()
+    if portable_path.exists():
+        return portable_path
+    if portable_path.parent.exists() and os.access(portable_path.parent, os.W_OK):
+        return portable_path
+    return _user_settings_path()
 
 
 def _to_bool(value: Any, default: bool) -> bool:
