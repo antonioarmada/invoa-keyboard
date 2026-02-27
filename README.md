@@ -28,6 +28,7 @@ bash scripts/build_macos.sh
 
 Salida:
 - `dist-macos/TecladoOcular.app`
+- `dist-macos/settings.yml` (copiado automaticamente si existe en el repo)
 
 Opcional:
 - `PYTHON_BIN=/ruta/python3 bash scripts/build_macos.sh`
@@ -40,6 +41,7 @@ Opcional:
 
 Salida:
 - `dist-windows/TecladoOcular/TecladoOcular.exe`
+- `dist-windows/TecladoOcular/settings.yml` (copiado automaticamente si existe en el repo)
 
 Configuracion en ejecutable:
 - La app busca primero `settings.yml` junto al ejecutable (modo portable).

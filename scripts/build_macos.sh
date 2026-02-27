@@ -27,4 +27,8 @@ fi
   --specpath build/pyinstaller-spec \
   main.py
 
+if [[ -f "settings.yml" ]]; then
+  cp "settings.yml" "dist-macos/settings.yml"
+fi
+
 echo "Build listo: dist-macos/TecladoOcular.app"

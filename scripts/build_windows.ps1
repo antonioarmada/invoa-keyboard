@@ -20,4 +20,8 @@ Set-Location $RootDir
     --specpath build/pyinstaller-spec `
     main.py
 
+if (Test-Path "settings.yml") {
+    Copy-Item "settings.yml" "dist-windows/TecladoOcular/settings.yml" -Force
+}
+
 Write-Host "Build listo: dist-windows/TecladoOcular/TecladoOcular.exe"
